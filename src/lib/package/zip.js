@@ -7,8 +7,9 @@ const glob = require('glob');
 const debug = require('debug')('fun:zip');
 const JSZip = require('jszip');
 const archiver = require('archiver');
-const lsArchive = require('ls-archive');
 const extract = require('extract-zip');
+const AdmZip = require('adm-zip');
+
 const { readLines } = require('../utils/file');
 const { green, grey } = require('colors');
 const { generateRandomZipPath } = require('../utils/path');
@@ -268,7 +269,6 @@ async function packTo(file, funignore, targetPath, prefix = '', zlibOptions = {}
 }
 
 async function pack(file, funignore) {
-
   const { randomDir, zipPath } = await generateRandomZipPath();
 
   const { count, compressedSize } = await packTo(file, funignore, zipPath);
@@ -277,22 +277,19 @@ async function pack(file, funignore) {
 
   await fs.remove(randomDir);
 
-  return {
-    base64,
-    count,
-    compressedSize
-  };
+  return { base64, count, compressedSize };
 }
 
 function readZipFile(zipPath, filePath) {
   return new Promise((resolve, reject) => {
-    lsArchive.readFile(zipPath, filePath, (error, data) => {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(data);
+    const zip = new AdmZip(zipPath);
+    const zipEntries = zip.getEntries(); // an array of ZipEntry records
+    zipEntries.forEach((zipEntry) => {
+      if (zipEntry.entryName === filePath) {
+        resolve(zip.readFile(zipEntry));
       }
     });
+    reject('not found');
   });
 }
 
@@ -309,6 +306,11 @@ function extractZipTo(zipPath, dest) {
   });
 }
 
+function isZipArchive(codeUri) {
+  return codeUri.endsWith('.zip') || codeUri.endsWith('.jar') || codeUri.endsWith('.war');
+}
+
 module.exports = {
-  pack, packTo, packFromJson, compress, readZipFile, extractZipTo
+  pack, packTo, packFromJson, compress,
+  readZipFile, extractZipTo, isZipArchive
 };

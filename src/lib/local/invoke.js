@@ -10,13 +10,11 @@ const rimraf = require('rimraf');
 const extract = require('extract-zip');
 const tmpDir = require('temp-dir');
 const uuid = require('uuid');
+
+const { isZipArchive } = require('../package/zip');
 const { DEFAULT_NAS_PATH_SUFFIX } = require('../tpl');
 
 const _ = require('lodash');
-
-function isZipArchive(codeUri) {
-  return codeUri.endsWith('.zip') || codeUri.endsWith('.jar') || codeUri.endsWith('.war');
-}
 
 async function processZipCodeIfNecessary(codeUri) {
 

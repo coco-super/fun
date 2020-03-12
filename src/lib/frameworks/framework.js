@@ -1,10 +1,13 @@
 'use strict';
 
+const _ = require('lodash');
 const fs = require('fs-extra');
 const path = require('path');
-const _ = require('lodash');
 const debug = require('debug')('fun:deploy');
 const { generateFile } = require('./common/file');
+
+const { red, green } = require('colors');
+const { isZipArchive, readZipFile } = require('../package/zip');
 
 const frameworks = [
   // php
@@ -24,6 +27,8 @@ const frameworks = [
   require('./go')
 ];
 
+const runtimeCheckFiles = ['package.json', 'pom.xml', 'composer.json'];
+
 function resolvePath(p) {
   if (_.isArray(p)) {
     return path.join(...p);
@@ -36,9 +41,16 @@ const runtimeCheckers = {
     'type': 'file',
     'path': 'package.json'
   },
-  'java': {
-    'type': 'file',
-    'path': 'pom.xml'
+  'java': async (codeDir) => {
+    const stat = await fs.lstat(codeDir);
+
+    if (stat.isFile()) {
+      throw new Error('file is not supported');
+    }
+
+    const pomPath = path.join(codeDir, 'pom.xml');
+
+    return await fs.pathExists(pomPath);
   },
   'php': {
     'type': 'file',
@@ -66,31 +78,23 @@ async function parseRulePaths(codeDir, rule) {
     } else {
       rs.push(path.join(codeDir, resolvePath(relativePath)));
     }
+
+    const pomPath = path.join(codeDir, 'composer.json');
+
+    return await fs.pathExists(pomPath);
   }
 
   return rs;
 }
 
-async function readJsonFile(p) {
-  if (!await fs.pathExists(p)) { return { success: false }; }
-
-  try {
-    const content = await fs.readFile(p);
-    const json = JSON.parse(content.toString());
-    return { success: true, json };
-  } catch (e) {
-    debug('readJsonFile error', e);
-    return { success: false };
-  }
-}
-
 async function checkJsonRule(codeDir, rule) {
-  const p = path.join(codeDir, resolvePath(rule.path));
   const jsonKey = rule.jsonKey;
   const jsonValueContains = rule.jsonValueContains;
 
-  const { success, json } = await readJsonFile(p);
-  if (!success) { return success; }
+  const fileContent = await readFileContent(codeDir, resolvePath(rule.path));
+  if (!fileContent) { return false; }
+
+  const json = JSON.parse(fileContent.toString());
   if (!_.has(json, jsonKey)) { return false; }
 
   const value = _.get(json, jsonKey);
@@ -103,50 +107,54 @@ async function checkJsonRule(codeDir, rule) {
 async function checkContainsRule(codeDir, rule) {
   const paths = await parseRulePaths(codeDir, rule);
   const content = rule.content;
-  for (const p of paths) {
-    if (!await fs.pathExists(p)) { continue; }
-    const fileContent = await fs.readFile(p, 'utf8');
+  for (const relativePath of paths) {
+    const fileContent = await readFileContent(codeDir, resolvePath(relativePath));
 
-    if (_.includes(fileContent, content)) { return true; }
+    if (!fileContent) { continue; }
+    if (_.includes(fileContent.toString(), content)) { return true; }
   }
 
   return false;
 }
 
 async function checkDirRule(codeDir, rule) {
-  const paths = await parseRulePaths(codeDir, rule);
-
-  for (const p of paths) {
-    if (await fs.pathExists(p)) {
-      const stat = await fs.stat(p);
-      return stat.isDirectory();
-    }
+  const paths = rule.paths || [rule.path];
+  for (const relativePath of paths) {
+    const fileContent = await readFileContent(codeDir, resolvePath(relativePath));
+    if (fileContent) { return true; }
   }
 
   return false;
 }
 
-async function checkFileRule(codeDir, rule) {
-  const paths = await parseRulePaths(codeDir, rule);
-  for (const f of paths) {
-    if (await fs.pathExists(f)) {
-      const stat = await fs.stat(f);
-      if (stat.isFile()) { return true; }
-    }
+async function readFileContent(codeUri, relativePath) {
+  if (isZipArchive(codeUri)) {
+    const [data, error] = await handle(readZipFile(codeUri, relativePath));
+    if (error) { return null; }
+
+    return data;
   }
 
-  return false;
+  const p = path.join(codeUri, relativePath);
+
+  if (!await fs.pathExists(p)) {
+    return null;
+  }
+
+  return await fs.readFile(p);
 }
 
 async function checkRegexRule(codeDir, rule) {
-  const paths = await parseRulePaths(codeDir, rule);
+  const paths = rule.paths || [rule.path];
+  if (!paths) { return false; }
 
   const regexContent = rule.content;
   const regex = new RegExp(regexContent, 'gm');
 
-  for (const p of paths) {
-    if (!await fs.pathExists(p)) { continue; }
-    const fileContent = await fs.readFile(p);
+  for (const relativePath of paths) {
+
+    const fileContent = await readFileContent(codeDir, relativePath);
+    if (!fileContent) { continue; }
 
     const match = regex.test(fileContent.toString());
     if (match) { return match; }
@@ -230,14 +238,20 @@ async function execProcessor(codeDir, processor) {
 
 async function detectFramework(codeDir) {
   for (const framework of frameworks) {
-    const runtime = framework.runtime;
-    const runtimeChecker = runtimeCheckers[runtime];
+    let checkResult;
 
-    if (!runtimeChecker) {
-      throw new Error('could not found runtime checker');
+    if (isZipArchive(codeDir)) {
+
+      checkResult = await findRuntimeCheckFileContent(codeDir);
+    } else {
+      const runtime = framework.runtime;
+      const runtimeChecker = runtimeCheckers[runtime];
+
+      if (!runtimeChecker) {
+        throw new Error('could not found runtime checker');
+      }
+      checkResult = await runtimeChecker(codeDir);
     }
-
-    const checkResult = await checkRule(codeDir, runtimeChecker);
 
     if (checkResult) {
       const detectors = framework.detectors;
@@ -252,6 +266,20 @@ async function detectFramework(codeDir) {
     }
   }
 
+  return null;
+}
+
+const handle = (promise) => {
+  return promise
+    .then(data => ([data, undefined]))
+    .catch(error => Promise.resolve([undefined, error]));
+};
+
+async function findRuntimeCheckFileContent(zipPath) {
+  for (const file of runtimeCheckFiles) {
+    const [data, error] = await handle(readZipFile(zipPath, file));
+    if (!error) { return data.toString(); }
+  }
   return null;
 }
 
@@ -319,8 +347,44 @@ Resources:
   return templateYmlContent;
 }
 
+async function parsingFramework(zipPath) {
+  const framework = await detectFramework(zipPath);
+
+  if (!framework) {
+    throw new Error('can not find any framework.');
+  }
+
+  const actions = framework.actions;
+
+  if (actions) {
+    for (const action of actions) {
+      const condition = action.condition;
+
+      if (_.isBoolean(condition)) {
+        if (!condition) { continue; }
+      } else if (condition) {
+        const checkResult = await checkRules(zipPath, condition);
+        debug(`action condition ${JSON.stringify(condition, null, 4)}, checkResult ${checkResult}`);
+
+        if (!checkResult) { continue; }
+      } else {
+        throw new Error(`not supported condition value ${condition}`);
+      }
+
+      const processors = action.processors;
+      for (const processor of processors) {
+        return {
+          port: '9000',
+          command: processor.content
+        };
+      }
+    }
+  }
+}
+
 module.exports = {
   detectFramework,
   generateTemplateContent,
-  execFrameworkActions
+  execFrameworkActions,
+  parsingFramework
 };
