@@ -384,14 +384,23 @@ async function parsingFramework(zipPath) {
       }
 
       const processors = action.processors;
-      for (const processor of processors) {
-        return {
-          port: '9000',
-          command: processor.content
-        };
+      if (processors.length !== 1) {
+        continue;
       }
+      const processor = processors[0];
+      if (processor.type !== 'generateFile') {
+        continue;
+      }
+      return {
+        port: '9000',
+        command: processor.content
+      };
     }
   }
+  return {
+    port: '',
+    command: ''
+  };
 }
 
 module.exports = {
