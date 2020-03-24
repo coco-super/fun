@@ -283,13 +283,12 @@ async function pack(file, funignore) {
 function readZipFile(zipPath, filePath) {
   return new Promise((resolve, reject) => {
     const zip = new AdmZip(zipPath);
-    const zipEntries = zip.getEntries(); // an array of ZipEntry records
-    zipEntries.forEach((zipEntry) => {
-      if (zipEntry.entryName === filePath) {
-        resolve(zip.readFile(zipEntry));
-      }
-    });
-    reject('not found');
+    const zipEntry = zip.getEntry(filePath);
+    if (zipEntry) {
+      resolve(zip.readFile(zipEntry));
+    } else {
+      reject('not found');
+    }
   });
 }
 
