@@ -127,6 +127,18 @@ async function checkDirRule(codeDir, rule) {
   return false;
 }
 
+async function checkFileRule(codeDir, rule) {
+  const paths = await parseRulePaths(codeDir, rule);
+  for (const f of paths) {
+    if (await fs.pathExists(f)) {
+      const stat = await fs.stat(f);
+      if (stat.isFile()) { return true; }
+    }
+  }
+
+  return false;
+}
+
 async function readFileContent(codeUri, relativePath) {
   if (isZipArchive(codeUri)) {
     const [data, error] = await handle(readZipFile(codeUri, relativePath));
