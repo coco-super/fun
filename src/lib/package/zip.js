@@ -288,6 +288,7 @@ function readZipFile(zipPath, filePath) {
       } else {
         resolve(data);
       }
+    });
   });
 }
 
