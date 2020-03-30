@@ -8,7 +8,7 @@ const debug = require('debug')('fun:zip');
 const JSZip = require('jszip');
 const archiver = require('archiver');
 const extract = require('extract-zip');
-const AdmZip = require('adm-zip');
+const lsArchive = require('ls-archive');
 
 const { readLines } = require('../utils/file');
 const { green, grey } = require('colors');
@@ -282,13 +282,12 @@ async function pack(file, funignore) {
 
 function readZipFile(zipPath, filePath) {
   return new Promise((resolve, reject) => {
-    const zip = new AdmZip(zipPath);
-    const zipEntry = zip.getEntry(filePath);
-    if (zipEntry) {
-      resolve(zip.readFile(zipEntry));
-    } else {
-      reject('not found');
-    }
+    lsArchive.readFile(zipPath, filePath, (error, data) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(data);
+      }
   });
 }
 
