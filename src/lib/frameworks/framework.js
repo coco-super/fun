@@ -41,16 +41,9 @@ const runtimeCheckers = {
     'type': 'file',
     'path': 'package.json'
   },
-  'java': async (codeDir) => {
-    const stat = await fs.lstat(codeDir);
-
-    if (stat.isFile()) {
-      throw new Error('file is not supported');
-    }
-
-    const pomPath = path.join(codeDir, 'pom.xml');
-
-    return await fs.pathExists(pomPath);
+  'java': {
+    'type': 'file',
+    'path': 'pom.xml'
   },
   'php': {
     'type': 'file',
@@ -253,7 +246,6 @@ async function detectFramework(codeDir) {
     let checkResult;
 
     if (isZipArchive(codeDir)) {
-
       checkResult = await findRuntimeCheckFileContent(codeDir);
     } else {
       const runtime = framework.runtime;
@@ -262,7 +254,8 @@ async function detectFramework(codeDir) {
       if (!runtimeChecker) {
         throw new Error('could not found runtime checker');
       }
-      checkResult = await runtimeChecker(codeDir);
+      
+      checkResult = await checkRule(codeDir, runtimeChecker);
     }
 
     if (checkResult) {
